@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 
 data/raw/
+predictive_maintenance_lean_10day_plan.md.pdf
