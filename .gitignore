@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 
 data/raw/
-predictive_maintenance_lean_10day_plan.md.pdf\
+predictive_maintenance_lean_10day_plan.md.pdf
 
 data/processed/
 
@@ -12,3 +12,6 @@ data/processed/
 
 .env
 .ipynb_checkpoints/
+
+mlflow.db
+mlruns/
