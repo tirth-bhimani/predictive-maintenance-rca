@@ -1,3 +1,4 @@
+import datetime
 import random
 
 import numpy as np
@@ -16,43 +17,33 @@ from src.rca.root_cause import (
 )
 
 
-# -----------------------------------
 # Settings
-# -----------------------------------
 
 FAILURE_THRESHOLD = 20
 
 
-# -----------------------------------
 # Create FastAPI application
-# -----------------------------------
 
 app = FastAPI(
     title="Predictive Maintenance API",
     description="RUL Prediction and Root Cause Analysis",
     version="1.0"
 )
+alerts = []
 
-
-# -----------------------------------
 # Load XGBoost model
-# -----------------------------------
 
 model = load_model()
 
 
-# -----------------------------------
 # Get feature names
-# -----------------------------------
 
 feature_names = (
     model.get_booster().feature_names
 )
 
 
-# -----------------------------------
 # Home endpoint
-# -----------------------------------
 
 @app.get("/")
 def home():
@@ -62,9 +53,7 @@ def home():
     }
 
 
-# -----------------------------------
 # Prediction endpoint
-# -----------------------------------
 
 @app.post(
     "/predict",
@@ -76,6 +65,8 @@ def predict(
 
     # Convert input features
 
+    unit = request.unit
+    
     features = np.array(
         request.features,
         dtype=float
@@ -121,6 +112,21 @@ def predict(
         predicted_rul < FAILURE_THRESHOLD
     )
 
+    failing_soon = predicted_rul < 20
+
+    if failing_soon:
+        existing_alert = any(
+            alert["unit"] == unit
+            for alert in alerts
+        )
+
+    if not existing_alert:
+        alerts.append({
+            "unit": unit,
+            "predicted_rul": round(predicted_rul, 2),
+            "message": "Failure likely soon",
+            "created_at": datetime.now().isoformat()
+        })
 
     # Root Cause Analysis
 
@@ -162,7 +168,9 @@ def predict(
         ]
     }
     
-    
+@app.get("/alerts")
+def get_alerts():
+    return alerts 
     
     #-----------------------------------
     # Testing
