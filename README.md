@@ -1,85 +1,66 @@
-# Predictive Maintenance & Root Cause Analysis for Turbofan Engines
+# Predictive Maintenance & Root Cause Analysis Platform
 
-Machine learning system for predicting **Remaining Useful Life (RUL)** of turbofan engines and explaining *why* a given prediction was made, using NASA's C-MAPSS sensor dataset.
+An end-to-end machine learning application that predicts the **Remaining Useful Life (RUL)** of industrial machines, classifies their failure risk, and explains each prediction using SHAP — served through a FastAPI backend and a Streamlit dashboard, fully containerized with Docker.
 
-**Status:** In development — core ML pipeline complete, API/dashboard/deployment layer in progress.
-
----
-
-## Summary
-
-Unplanned equipment failure is expensive and disruptive. This project builds an ML pipeline that:
-
-- Predicts how many operating cycles an engine has left before failure (RUL)
-- Flags engines that are likely to fail soon, based on a configurable threshold
-- Explains individual predictions using SHAP, identifying which sensor readings drove the result
-- Compares a tree-based model (XGBoost) against a sequence model (LSTM) to justify the model choice
-- Tracks all experiments (parameters, metrics) with MLflow for reproducibility
-
-The goal was to build something closer to a real maintenance decision-support tool than a one-off notebook: proper train/validation splitting by engine unit, hyperparameter tuning, experiment tracking, and model interpretability, not just a single RMSE number.
+Built on the **NASA C-MAPSS FD001** turbofan engine dataset.
 
 ---
 
-## Dataset
+## Overview
 
-**NASA C-MAPSS, subset FD001** — simulated turbofan engine degradation data.
+Traditional maintenance reacts after a machine fails. This project takes the opposite approach: it continuously estimates how much useful life a machine has left, so maintenance can be planned before a failure happens.
 
-- 100 training engine units, run to failure
-- 3 operational settings + 21 sensor channels per cycle
-- Target: Remaining Useful Life (cycles until failure)
+```
+Sensor Data → XGBoost Model → Predicted RUL → Risk Level → SHAP Explanation → Maintenance Decision
+```
 
----
+Given a machine's current sensor readings, the system returns:
 
-## Approach
+- **Predicted RUL** — estimated operating cycles remaining
+- **Risk level** — HIGH / MEDIUM / LOW, derived from the predicted RUL
+- **Root cause factors** — the top 3 sensor features driving that specific prediction (via SHAP)
 
-**1. Label construction**
-RUL is computed per engine as `max_cycle − current_cycle`, then capped at 125 cycles. Capping prevents the model from over-focusing on engines that are still far from failure, and puts more training signal on the degradation window that actually matters operationally.
-
-**2. Feature engineering**
-Rolling mean and rolling standard deviation are computed over a 10-cycle window for each sensor, to capture trend and volatility rather than just instantaneous readings.
-
-**3. Train/validation split**
-Split by **engine unit ID**, not by row. This avoids leaking cycles from the same engine across both sets, which would otherwise give an unrealistically optimistic validation score.
-
-**4. Modeling**
-Two models were trained and compared:
-
-| Model | Type | Role |
-|---|---|---|
-| XGBoost | Gradient-boosted trees on engineered tabular features | Primary model |
-| LSTM (PyTorch) | Sequence model over 30-cycle sliding windows | Comparison baseline |
-
-XGBoost hyperparameters (`n_estimators`, `max_depth`, `learning_rate`, `subsample`, `colsample_bytree`, `min_child_weight`) were tuned with `RandomizedSearchCV`. On this feature set, XGBoost outperformed the LSTM on validation RMSE, so it was selected as the primary model — the LSTM is kept in the repo as a documented baseline for comparison, which was itself part of the point: showing that a more complex model isn't automatically the right choice.
-
-**5. Failure flagging**
-Predicted RUL below a configurable threshold (default: 20 cycles) is flagged as `failing_soon = True`.
-
-**6. Explainability**
-For any prediction, SHAP's `TreeExplainer` ranks feature contributions and returns the top 3 sensor/rolling features responsible for that prediction — turning "RUL = 18" into "RUL = 18, driven mainly by sensor_11 and rolling volatility in sensor_4," which is what an actual maintenance decision needs.
-
-**7. Experiment tracking**
-All runs (hyperparameters, RMSE, MAE, config) are logged with MLflow to a local `mlruns/` store for comparison across runs.
+| Predicted RUL | Risk |
+|---|---|
+| < 20 cycles | HIGH |
+| 20-49 cycles | MEDIUM |
+| >= 50 cycles | LOW |
 
 ---
 
 ## Architecture
 
 ```
-C-MAPSS FD001
-      │
-      ▼
-Preprocessing (RUL calc + capping, rolling features)
-      │
-      ▼
-Unit-based train/validation split
-      │
-   ┌──┴──┐
-   ▼     ▼
-XGBoost  LSTM   →  model comparison → XGBoost selected
-   │
-   ├── Failure flag (RUL < threshold)
-   └── SHAP → Root Cause Analysis (top-3 features)
+NASA C-MAPSS FD001
+        |
+        v
+Processed Sensor Data
+        |
+        v
+  Streamlit Dashboard  --POST /predict-->  FastAPI
+                                              |
+                                              v
+                                       XGBoost RUL Model
+                                              |
+                                   +----------+----------+
+                                   v          v          v
+                                  RUL       Risk    SHAP Factors
 ```
+
+The dashboard lets a user pick a machine and a cycle, sends that cycle's sensor data to the API, and displays the prediction, risk level, and top contributing factors — updating automatically as the cycle changes.
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
+|---|---|
+| Modeling | XGBoost, SHAP, Pandas, NumPy |
+| Backend | FastAPI, Uvicorn, Pydantic |
+| Frontend | Streamlit, Plotly |
+| Deployment | Docker, Docker Compose |
+
+The current version is intentionally scoped to keep the core prediction pipeline simple — there's no database or auth layer yet (see Roadmap below).
 
 ---
 
@@ -87,107 +68,116 @@ XGBoost  LSTM   →  model comparison → XGBoost selected
 
 ```
 predictive-maintenance-rca/
-├── data/
-│   ├── raw/            # not committed — see data/raw/README.md
-│   └── processed/      # not committed — see data/processed/README.md
+├── data/processed/train_processed.csv
 ├── src/
-│   ├── data/preprocessing.py
-│   ├── models/
-│   │   ├── xgboost_model.py
-│   │   └── lstm.py
-│   ├── rca/
-│   │   ├── root_cause.py
-│   │   └── test_rca.py
-│   ├── api/             # in progress
-│   │   ├── main.py
-│   │   ├── schemas.py
-│   │   └── db/models.py
-│   └── dashboard/        # in progress
-│       └── streamlit_app.py
-├── docker/                # in progress
+│   ├── api/main.py                        # FastAPI app
+│   ├── dashboard/streamlit_app.py          # Streamlit UI
+│   └── models/xgboost_rul/xgboost_rul_model.json
+├── docker/
 │   ├── Dockerfile.api
+│   ├── Dockerfile.dashboard
 │   └── docker-compose.yml
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
 
-`venv/`, `mlruns/`, model checkpoints (`*.pth`, `*.pt`, `*.pkl`), and raw/processed data are gitignored to keep the repo lightweight.
+---
+
+## Feature Set
+
+The model is trained on 24 raw inputs (cycle, 3 operating settings, 21 sensors) plus engineered 10-cycle rolling mean/std for each sensor — 45+ features total, e.g. `sensor11`, `sensor11_mean_10`, `sensor11_std_10`.
 
 ---
 
-## Tech Stack
+## Running Locally
 
-**Core:** Python, Pandas, NumPy, Scikit-learn
-**Modeling:** XGBoost, PyTorch
-**Explainability:** SHAP
-**Experiment tracking:** MLflow
-**Planned (in progress):** FastAPI, Streamlit, SQLAlchemy, PostgreSQL, Docker
-
----
-
-## Running It
-
-```powershell
+```bash
 git clone https://github.com/tirth-bhimani/predictive-maintenance-rca.git
 cd predictive-maintenance-rca
-
 python -m venv venv
-.\venv\Scripts\activate
+venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 ```
 
-**Preprocess data**
-```powershell
-python src/data/preprocessing.py
+**Start the API** (terminal 1)
+```bash
+uvicorn src.api.main:app --reload
 ```
+API: `http://127.0.0.1:8000` · Swagger docs: `http://127.0.0.1:8000/docs`
 
-**Train XGBoost** (tuning, evaluation, MLflow logging)
-```powershell
-python src/models/xgboost_model.py
+**Start the dashboard** (terminal 2)
+```bash
+streamlit run src/dashboard/streamlit_app.py
 ```
-
-**Train LSTM comparison model**
-```powershell
-python src/models/lstm.py
-```
-
-**Run Root Cause Analysis** (SHAP-based feature ranking on trained model)
-```powershell
-python src/rca/test_rca.py
-```
-
-**View experiment tracking**
-```powershell
-$env:MLFLOW_ALLOW_FILE_STORE="true"
-mlflow ui --backend-store-uri ./mlruns
-```
-Then open `http://127.0.0.1:5000`.
+Dashboard: `http://localhost:8501`
 
 ---
 
-## What's Done vs. What's Next
+## Running with Docker
 
-**Done**
-- Data preprocessing, RUL labeling and capping, rolling feature engineering
-- Unit-based train/validation split
-- XGBoost model with hyperparameter tuning, RMSE/MAE evaluation
-- LSTM baseline with early stopping, for model comparison
-- Failure threshold flagging
-- SHAP-based Root Cause Analysis (top-3 contributing features)
-- MLflow experiment tracking
+```bash
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up
+```
 
-**Next**
-- FastAPI prediction service
-- PostgreSQL storage for predictions/history
-- Streamlit dashboard for monitoring
-- Dockerized deployment
-- Data drift / model performance monitoring in production
+| Service | URL |
+|---|---|
+| Dashboard | http://localhost:8501 |
+| API | http://localhost:8000 |
+| Swagger | http://localhost:8000/docs |
+
+Two containers are built: `predictive-maintenance-api` and `predictive-maintenance-dashboard`, with the dashboard depending on the API. Inside Docker, the dashboard reaches the API via the service name (`http://api:8000`), not `localhost`.
 
 ---
 
-## Why XGBoost Over LSTM
+## API
 
-Both a tabular tree-based model and a sequence-based deep learning model were evaluated rather than assuming one was better. XGBoost performed better on this engineered feature set (rolling statistics already capture a lot of the temporal signal a sequence model would otherwise need to learn), so it was chosen as the primary model. The LSTM is kept in the repo as evidence of that comparison rather than as dead code.
+**`POST /predict`** — accepts a machine's current cycle + sensor readings, returns the prediction.
+
+Request (abbreviated — full payload includes all 21 sensors and their rolling features):
+```json
+{
+  "unit": 1,
+  "cycle": 50,
+  "setting1": 0.0, "setting2": 0.0, "setting3": 100.0,
+  "sensor1": 518.67, "sensor11": 47.47,
+  "sensor1_mean_10": 518.67, "sensor1_std_10": 0.5
+}
+```
+
+Response:
+```json
+{
+  "unit": 1,
+  "predicted_rul": 42.75,
+  "risk": "MEDIUM",
+  "top_factors": [
+    { "feature": "sensor11", "importance": 5.23 },
+    { "feature": "sensor4", "importance": 4.87 },
+    { "feature": "sensor15", "importance": 3.91 }
+  ]
+}
+```
+
+Other endpoints: `GET /` and `GET /health`.
+
+---
+
+## Design Notes
+
+**Why RUL + risk level, not just risk level?**
+A raw risk label ("HIGH") doesn't tell an engineer *why*. Pairing the numeric RUL with SHAP-ranked contributing sensors turns a black-box classification into something actionable — e.g. "RUL = 18, driven mainly by sensor11 and sensor4."
+
+**Why no database yet?**
+The current scope is deliberately a single prediction pipeline (data → model → API → dashboard) to keep the core ML/serving loop clean and easy to reason about. Persistence, auth, and monitoring are the next layer to add, not the first.
+
+---
+
+## Limitations
+
+- Sensor input is simulated from the NASA dataset, not a live industrial feed
+- Only the FD001 subset is used (single operating condition, single fault mode)
+- Risk thresholds (20 / 50 cycles) are fixed defaults, not validated against real failure data
+- No authentication, logging, or model versioning — not production-hardened
 
 ---
 

@@ -7,7 +7,7 @@ import shap
 
 app = FastAPI(title="Predictive Maintenance API")
 
-MODEL_PATH = r"D:\\resume\\ml_mini\\src\\models\\xgboost_rul_model.json"
+MODEL_PATH = "src/models/xgboost_rul_model.json"
 
 model = xgb.XGBRegressor()
 model.load_model(MODEL_PATH)
